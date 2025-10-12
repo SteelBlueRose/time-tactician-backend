@@ -1,5 +1,4 @@
 const { Pool, types } = require('pg');
-const config = require('./migration-config');
 
 // Parse TIMESTAMP and TIMESTAMPTZ as dates
 types.setTypeParser(1114, (stringValue) => {
@@ -7,7 +6,7 @@ types.setTypeParser(1114, (stringValue) => {
 });
 
 const pool = new Pool({
-  connectionString: config.databaseUrl,
+  connectionString: process.env.DATABASE_URL,
 });
 
 module.exports = {
