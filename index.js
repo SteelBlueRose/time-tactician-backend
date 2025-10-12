@@ -2,10 +2,19 @@ const express = require('express');
 const app = express();
 const port = process.env.PORT || 3001;
 const cors = require('cors');
-app.use(cors({
-  origin: 'http://localhost:3000',
+
+const whitelist = ['http://localhost:3000', process.env.FRONTEND_URL];
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (whitelist.indexOf(origin) !== -1 || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
-}));
+};
+app.use(cors(corsOptions));
 
 // Init Middleware
 app.use(express.json({ extended: false }));
