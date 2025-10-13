@@ -1,22 +1,12 @@
-require('dotenv').config();
+require('dotenv').config({ debug: true });
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 3001;
 const cors = require('cors');
 
 const whitelist = ['http://localhost:3000', process.env.FRONTEND_URL];
-
-// --- DEBUGGING ---
-console.log('--- CORS DEBUGGING ---');
-console.log('process.env.FRONTEND_URL:', process.env.FRONTEND_URL);
-console.log('Whitelist:', whitelist);
-console.log('----------------------');
-
 const corsOptions = {
   origin: function (origin, callback) {
-    // --- DEBUGGING ---
-    console.log('Request Origin:', origin);
-    
     if (whitelist.indexOf(origin) !== -1 || !origin) {
       callback(null, true);
     } else {
