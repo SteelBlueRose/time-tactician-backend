@@ -43,11 +43,20 @@ router.get('/', auth, async (req, res) => {
 // @route   POST /api/tasks
 // @desc    Add a new task
 router.post('/', auth, async (req, res) => {
-  const { title, description, priority, deadline, estimated_time } = req.body;
+  const { title, description, priority, deadline, estimated_time, parent_task_id } = req.body;
+  let finalDeadline = deadline;
+
   try {
+    if (parent_task_id && !deadline) {
+      const parentTask = await db.query('SELECT deadline FROM tasks WHERE id = $1 AND user_id = $2', [parent_task_id, req.user.id]);
+      if (parentTask.rows.length > 0) {
+        finalDeadline = parentTask.rows[0].deadline;
+      }
+    }
+
     const newTask = await db.query(
-      'INSERT INTO tasks (user_id, title, description, priority, deadline, estimated_time) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [req.user.id, title, description, priority, deadline, estimated_time]
+      'INSERT INTO tasks (user_id, title, description, priority, deadline, estimated_time, parent_task_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [req.user.id, title, description, priority, finalDeadline, estimated_time, parent_task_id]
     );
     res.json(newTask.rows[0]);
   } catch (err) {
