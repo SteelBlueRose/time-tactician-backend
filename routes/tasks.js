@@ -24,9 +24,11 @@ router.get('/', auth, async (req, res) => {
     SELECT 
       t.id, t.user_id, t.title, t.description, t.priority, t.deadline, 
       t.estimated_time, t.parent_task_id, t.created_at, t.updated_at, t.state, t.reward_points,
-      COALESCE(json_agg(ts.*) FILTER (WHERE ts.id IS NOT NULL), '[]') as time_slots
+      COALESCE(json_agg(DISTINCT ts.*) FILTER (WHERE ts.id IS NOT NULL), '[]') as time_slots,
+      COALESCE(json_agg(DISTINCT sub.id) FILTER (WHERE sub.id IS NOT NULL), '[]') as subtask_ids
     FROM tasks t
     LEFT JOIN time_slots ts ON t.id = ts.task_id
+    LEFT JOIN tasks sub ON t.id = sub.parent_task_id
     ${whereClause}
     GROUP BY t.id
   `;
@@ -43,40 +45,68 @@ router.get('/', auth, async (req, res) => {
 // @route   POST /api/tasks
 // @desc    Add a new task
 router.post('/', auth, async (req, res) => {
-  const { title, description, priority, deadline, estimated_time, parent_task_id } = req.body;
+  const { title, description, priority, deadline, estimated_time, reward_points, time_slots, parent_task_id } = req.body;
   let finalDeadline = deadline;
+  const client = await db.getClient();
 
   try {
+    await client.query('BEGIN');
+
     if (parent_task_id && !deadline) {
-      const parentTask = await db.query('SELECT deadline FROM tasks WHERE id = $1 AND user_id = $2', [parent_task_id, req.user.id]);
+      const parentTask = await client.query('SELECT deadline FROM tasks WHERE id = $1 AND user_id = $2', [parent_task_id, req.user.id]);
       if (parentTask.rows.length > 0) {
         finalDeadline = parentTask.rows[0].deadline;
       }
     }
 
-    const newTask = await db.query(
-      'INSERT INTO tasks (user_id, title, description, priority, deadline, estimated_time, parent_task_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [req.user.id, title, description, priority, finalDeadline, estimated_time, parent_task_id]
+    const newTaskResult = await client.query(
+      'INSERT INTO tasks (user_id, title, description, priority, deadline, estimated_time, reward_points, parent_task_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+      [req.user.id, title, description, priority, finalDeadline, estimated_time, reward_points, parent_task_id]
     );
-    res.json(newTask.rows[0]);
+    const newTask = newTaskResult.rows[0];
+
+    if (time_slots && Array.isArray(time_slots)) {
+      for (const slot of time_slots) {
+        await client.query(
+          'INSERT INTO time_slots (user_id, task_id, start_time, end_time, slot_type) VALUES ($1, $2, $3, $4, $5)',
+          [req.user.id, newTask.id, slot.start_time, slot.end_time, 'WorkingHours']
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    
+    const result = await db.query(
+      `SELECT t.*, COALESCE(json_agg(ts.*) FILTER (WHERE ts.id IS NOT NULL), '[]') as time_slots
+       FROM tasks t
+       LEFT JOIN time_slots ts ON t.id = ts.task_id
+       WHERE t.id = $1 AND t.user_id = $2
+       GROUP BY t.id`,
+      [newTask.id, req.user.id]
+    );
+
+    res.json(result.rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error(err.message);
     res.status(500).send('Server Error');
+  } finally {
+    client.release();
   }
 });
 
 // @route   PUT /api/tasks/:id
 // @desc    Update a task
 router.put('/:id', auth, async (req, res) => {
-  const { title, description, priority, deadline, estimated_time, state, time_slots } = req.body;
+  const { title, description, priority, deadline, estimated_time, reward_points, state, time_slots } = req.body;
   const client = await db.getClient();
 
   try {
     await client.query('BEGIN');
 
     const updatedTask = await client.query(
-      'UPDATE tasks SET title = $1, description = $2, priority = $3, deadline = $4, estimated_time = $5, state = $6, updated_at = CURRENT_TIMESTAMP WHERE id = $7 AND user_id = $8 RETURNING *',
-      [title, description, priority, deadline, estimated_time, state, req.params.id, req.user.id]
+      'UPDATE tasks SET title = $1, description = $2, priority = $3, deadline = $4, estimated_time = $5, reward_points = $6, state = $7, updated_at = CURRENT_TIMESTAMP WHERE id = $8 AND user_id = $9 RETURNING *',
+      [title, description, priority, deadline, estimated_time, reward_points, state, req.params.id, req.user.id]
     );
 
     if (updatedTask.rows.length === 0) {
