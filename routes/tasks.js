@@ -205,20 +205,43 @@ router.post('/:id/start', auth, async (req, res) => {
 // @route   POST /api/tasks/:id/complete
 // @desc    Complete a task
 router.post('/:id/complete', auth, async (req, res) => {
+  const client = await db.getClient();
   try {
-    const updatedTask = await db.query(
+    await client.query('BEGIN');
+
+    // Get the task's reward points
+    const taskResult = await client.query('SELECT reward_points FROM tasks WHERE id = $1 AND user_id = $2', [
+      req.params.id,
+      req.user.id,
+    ]);
+
+    if (taskResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ msg: 'Task not found or user not authorized' });
+    }
+
+    const { reward_points } = taskResult.rows[0];
+
+    // Update the user's reward points
+    await client.query('UPDATE users SET reward_points = reward_points + $1 WHERE id = $2', [
+      reward_points,
+      req.user.id,
+    ]);
+
+    // Update the task's state to 'Completed'
+    const updatedTask = await client.query(
       "UPDATE tasks SET state = 'Completed', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND user_id = $2 RETURNING *",
       [req.params.id, req.user.id]
     );
 
-    if (updatedTask.rows.length === 0) {
-      return res.status(404).json({ msg: 'Task not found or user not authorized' });
-    }
-
+    await client.query('COMMIT');
     res.json(updatedTask.rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error(err.message);
     res.status(500).send('Server Error');
+  } finally {
+    client.release();
   }
 });
 
