@@ -225,21 +225,48 @@ router.post('/:id/complete', auth, async (req, res) => {
 // @route   DELETE /api/tasks/:id
 // @desc    Delete a task
 router.delete('/:id', auth, async (req, res) => {
-    try {
-      const deleteTask = await db.query('DELETE FROM tasks WHERE id = $1 AND user_id = $2 RETURNING *', [
-        req.params.id,
-        req.user.id,
-      ]);
-  
-      if (deleteTask.rows.length === 0) {
-        return res.status(404).json({ msg: 'Task not found or user not authorized' });
-      }
-  
-      res.json({ msg: 'Task removed' });
-    } catch (err) {
-      console.error(err.message);
-      res.status(500).send('Server Error');
+  const client = await db.getClient();
+
+  const deleteTaskWithSubtasks = async (taskId, client) => {
+    // Find subtasks
+    const subtasks = await client.query('SELECT id FROM tasks WHERE parent_task_id = $1 AND user_id = $2', [
+      taskId,
+      req.user.id,
+    ]);
+
+    // Recursively delete subtasks
+    for (const subtask of subtasks.rows) {
+      await deleteTaskWithSubtasks(subtask.id, client);
     }
-  });
+
+    // Delete the task itself
+    const deleteTask = await client.query('DELETE FROM tasks WHERE id = $1 AND user_id = $2 RETURNING *', [
+      taskId,
+      req.user.id,
+    ]);
+
+    return deleteTask;
+  };
+
+  try {
+    await client.query('BEGIN');
+
+    const deleteTask = await deleteTaskWithSubtasks(req.params.id, client);
+
+    if (deleteTask.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ msg: 'Task not found or user not authorized' });
+    }
+
+    await client.query('COMMIT');
+    res.json({ msg: 'Task and all its subtasks removed' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  } finally {
+    client.release();
+  }
+});
 
 module.exports = router;
