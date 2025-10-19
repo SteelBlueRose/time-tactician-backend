@@ -27,7 +27,7 @@ router.get('/', auth, async (req, res) => {
       COALESCE(json_agg(DISTINCT ts.*) FILTER (WHERE ts.id IS NOT NULL), '[]') as time_slots,
       COALESCE(json_agg(DISTINCT sub.id) FILTER (WHERE sub.id IS NOT NULL), '[]') as subtask_ids
     FROM tasks t
-    LEFT JOIN time_slots ts ON t.id = ts.task_id
+    LEFT JOIN task_time_slots ts ON t.id = ts.task_id
     LEFT JOIN tasks sub ON t.id = sub.parent_task_id
     ${whereClause}
     GROUP BY t.id
@@ -68,8 +68,8 @@ router.post('/', auth, async (req, res) => {
     if (time_slots && Array.isArray(time_slots)) {
       for (const slot of time_slots) {
         await client.query(
-          'INSERT INTO time_slots (user_id, task_id, start_time, end_time, slot_type) VALUES ($1, $2, $3, $4, $5)',
-          [req.user.id, newTask.id, slot.start_time, slot.end_time, 'WorkingHours']
+          'INSERT INTO task_time_slots (task_id, start_time, end_time) VALUES ($1, $2, $3)',
+          [newTask.id, slot.start_time, slot.end_time]
         );
       }
     }
@@ -106,17 +106,25 @@ router.put('/schedule', auth, async (req, res) => {
 
     for (const task of tasks) {
       // Clear existing time slots for the task
-      await client.query('DELETE FROM time_slots WHERE task_id = $1 AND user_id = $2', [task.id, req.user.id]);
+      await client.query('DELETE FROM task_time_slots WHERE task_id = $1', [task.id]);
 
       // Insert new time slots
       if (task.time_slots && task.time_slots.length > 0) {
         for (const slot of task.time_slots) {
           await client.query(
-            'INSERT INTO time_slots (user_id, task_id, start_time, end_time, slot_type) VALUES ($1, $2, $3, $4, $5)',
-            [req.user.id, task.id, slot.start_time, slot.end_time, 'WorkingHours'] // Assuming scheduled tasks are 'WorkingHours'
+            'INSERT INTO task_time_slots (task_id, start_time, end_time) VALUES ($1, $2, $3)',
+            [task.id, slot.start_time, slot.end_time]
           );
         }
       }
+
+      // Update task state based on whether it has time slots
+      const hasTimeSlots = task.time_slots && task.time_slots.length > 0;
+      const newState = hasTimeSlots ? 'Scheduled' : 'Created';
+      await client.query(
+        'UPDATE tasks SET state = $1 WHERE id = $2 AND user_id = $3',
+        [newState, task.id, req.user.id]
+      );
     }
 
     await client.query('COMMIT');
@@ -150,12 +158,12 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     if (time_slots && Array.isArray(time_slots)) {
-      await client.query('DELETE FROM time_slots WHERE task_id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+      await client.query('DELETE FROM task_time_slots WHERE task_id = $1', [req.params.id]);
 
       for (const slot of time_slots) {
         await client.query(
-          'INSERT INTO time_slots (user_id, task_id, start_time, end_time, slot_type) VALUES ($1, $2, $3, $4, $5)',
-          [req.user.id, req.params.id, slot.start_time, slot.end_time, 'WorkingHours']
+          'INSERT INTO task_time_slots (task_id, start_time, end_time) VALUES ($1, $2, $3)',
+          [req.params.id, slot.start_time, slot.end_time]
         );
       }
     }
