@@ -1,3 +1,4 @@
+console.log("--- SERVER STARTING WITH LATEST CHANGES ---");
 require('dotenv').config({ debug: true });
 const express = require('express');
 const app = express();

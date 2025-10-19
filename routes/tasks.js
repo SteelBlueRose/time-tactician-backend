@@ -27,7 +27,7 @@ router.get('/', auth, async (req, res) => {
       COALESCE(json_agg(DISTINCT ts.*) FILTER (WHERE ts.id IS NOT NULL), '[]') as time_slots,
       COALESCE(json_agg(DISTINCT sub.id) FILTER (WHERE sub.id IS NOT NULL), '[]') as subtask_ids
     FROM tasks t
-    LEFT JOIN time_slots ts ON t.id = ts.task_id
+    LEFT JOIN task_time_slots ts ON t.id = ts.task_id
     LEFT JOIN tasks sub ON t.id = sub.parent_task_id
     ${whereClause}
     GROUP BY t.id
@@ -68,8 +68,8 @@ router.post('/', auth, async (req, res) => {
     if (time_slots && Array.isArray(time_slots)) {
       for (const slot of time_slots) {
         await client.query(
-          'INSERT INTO time_slots (user_id, task_id, start_time, end_time, slot_type) VALUES ($1, $2, $3, $4, $5)',
-          [req.user.id, newTask.id, slot.start_time, slot.end_time, 'WorkingHours']
+          'INSERT INTO task_time_slots (task_id, start_time, end_time) VALUES ($1, $2, $3)',
+          [newTask.id, slot.start_time, slot.end_time]
         );
       }
     }
@@ -86,6 +86,49 @@ router.post('/', auth, async (req, res) => {
     );
 
     res.json(result.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err.message);
+    res.status(500).send('Server Error');
+  } finally {
+    client.release();
+  }
+});
+
+// @route   PUT /api/tasks/schedule
+// @desc    Update the schedule for multiple tasks
+router.put('/schedule', auth, async (req, res) => {
+  const { tasks } = req.body; // Expect an array of tasks with time_slots
+  const client = await db.getClient();
+
+  try {
+    await client.query('BEGIN');
+
+    for (const task of tasks) {
+      // Clear existing time slots for the task
+      await client.query('DELETE FROM task_time_slots WHERE task_id = $1', [task.id]);
+
+      // Insert new time slots
+      if (task.time_slots && task.time_slots.length > 0) {
+        for (const slot of task.time_slots) {
+          await client.query(
+            'INSERT INTO task_time_slots (task_id, start_time, end_time) VALUES ($1, $2, $3)',
+            [task.id, slot.start_time, slot.end_time]
+          );
+        }
+      }
+
+      // Update task state based on whether it has time slots
+      const hasTimeSlots = task.time_slots && task.time_slots.length > 0;
+      const newState = hasTimeSlots ? 'Scheduled' : 'Created';
+      await client.query(
+        'UPDATE tasks SET state = $1 WHERE id = $2 AND user_id = $3',
+        [newState, task.id, req.user.id]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({ msg: 'Schedule updated successfully' });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error(err.message);
@@ -115,12 +158,12 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     if (time_slots && Array.isArray(time_slots)) {
-      await client.query('DELETE FROM time_slots WHERE task_id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+      await client.query('DELETE FROM task_time_slots WHERE task_id = $1', [req.params.id]);
 
       for (const slot of time_slots) {
         await client.query(
-          'INSERT INTO time_slots (user_id, task_id, start_time, end_time, slot_type) VALUES ($1, $2, $3, $4, $5)',
-          [req.user.id, req.params.id, slot.start_time, slot.end_time, 'WorkingHours']
+          'INSERT INTO task_time_slots (task_id, start_time, end_time) VALUES ($1, $2, $3)',
+          [req.params.id, slot.start_time, slot.end_time]
         );
       }
     }
@@ -145,79 +188,6 @@ router.put('/:id', auth, async (req, res) => {
     client.release();
   }
 });
-
-// @route   PUT /api/tasks/schedule
-// @desc    Update the schedule for multiple tasks
-router.put('/schedule', auth, async (req, res) => {
-  const { tasks } = req.body; // Expect an array of tasks with time_slots
-  console.log('--- Received /tasks/schedule request ---');
-  console.log('Request body:', JSON.stringify(req.body, null, 2));
-
-  const client = await db.getClient();
-
-  try {
-    await client.query('BEGIN');
-    console.log('Transaction started.');
-
-    if (!Array.isArray(tasks)) {
-      console.error('Validation Error: tasks is not an array.');
-      await client.query('ROLLBACK');
-      return res.status(400).json({ msg: 'Invalid request body: tasks must be an array.' });
-    }
-
-    for (const task of tasks) {
-      console.log(`Processing task ID: ${task.id}`);
-      if (typeof task.id === 'undefined') {
-        console.error('Skipping task with undefined ID:', task);
-        continue;
-      }
-
-      // Clear existing time slots for the task
-      console.log(`Deleting existing time slots for task ID: ${task.id}`);
-      await client.query('DELETE FROM time_slots WHERE task_id = $1 AND user_id = $2', [task.id, req.user.id]);
-      console.log(`Deleted existing time slots for task ID: ${task.id}`);
-
-      // Insert new time slots
-      if (task.time_slots && task.time_slots.length > 0) {
-        console.log(`Inserting ${task.time_slots.length} new time slots for task ID: ${task.id}`);
-        for (const slot of task.time_slots) {
-          console.log('Inserting slot:', JSON.stringify(slot, null, 2));
-          const { start_time, end_time } = slot;
-          if (!start_time || !end_time) {
-            console.error('Skipping slot with missing start_time or end_time:', slot);
-            continue;
-          }
-          await client.query(
-            'INSERT INTO time_slots (user_id, task_id, start_time, end_time, slot_type) VALUES ($1, $2, $3, $4, $5)',
-            [req.user.id, task.id, start_time, end_time, 'WorkingHours']
-          );
-        }
-        console.log(`Finished inserting new time slots for task ID: ${task.id}`);
-      } else {
-        console.log(`No new time slots to insert for task ID: ${task.id}`);
-      }
-    }
-
-    console.log('Committing transaction.');
-    await client.query('COMMIT');
-    console.log('Transaction committed.');
-    res.json({ msg: 'Schedule updated successfully' });
-  } catch (err) {
-    console.error('--- ERROR in /tasks/schedule ---');
-    console.error('Error object:', err);
-    console.error('Error message:', err.message);
-    console.error('Stack trace:', err.stack);
-    console.log('Rolling back transaction.');
-    await client.query('ROLLBACK');
-    console.log('Transaction rolled back.');
-    res.status(500).send('Server Error');
-  } finally {
-    console.log('Releasing client.');
-    client.release();
-    console.log('--- Finished /tasks/schedule request ---');
-  }
-});
-
 
 // @route   POST /api/tasks/:id/start
 // @desc    Start a task
