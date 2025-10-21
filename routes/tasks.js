@@ -25,12 +25,22 @@ router.get('/', auth, async (req, res) => {
       t.id, t.user_id, t.title, t.description, t.priority, t.deadline, 
       t.estimated_time, t.parent_task_id, t.created_at, t.updated_at, t.state, t.reward_points,
       COALESCE(json_agg(DISTINCT ts.*) FILTER (WHERE ts.id IS NOT NULL), '[]') as time_slots,
-      COALESCE(json_agg(DISTINCT sub.id) FILTER (WHERE sub.id IS NOT NULL), '[]') as subtask_ids
+      COALESCE(json_agg(DISTINCT sub.id) FILTER (WHERE sub.id IS NOT NULL), '[]') as subtask_ids,
+      CASE 
+        WHEN rp.id IS NOT NULL THEN json_build_object(
+          'frequency', rp.frequency, 
+          'interval', rp.interval, 
+          'specific_days', rp.specific_days
+        ) 
+        ELSE NULL 
+      END as recurrence
     FROM tasks t
     LEFT JOIN task_time_slots ts ON t.id = ts.task_id
     LEFT JOIN tasks sub ON t.id = sub.parent_task_id
+    LEFT JOIN habits h ON t.id = h.task_id
+    LEFT JOIN recurrence_patterns rp ON h.recurrence_id = rp.id
     ${whereClause}
-    GROUP BY t.id
+    GROUP BY t.id, rp.id
   `;
 
   try {
@@ -45,7 +55,7 @@ router.get('/', auth, async (req, res) => {
 // @route   POST /api/tasks
 // @desc    Add a new task
 router.post('/', auth, async (req, res) => {
-  const { title, description, priority, deadline, estimated_time, reward_points, time_slots, parent_task_id } = req.body;
+  const { title, description, priority, deadline, estimated_time, reward_points, time_slots, parent_task_id, recurrence } = req.body;
   let finalDeadline = deadline;
   const client = await db.getClient();
 
@@ -74,14 +84,32 @@ router.post('/', auth, async (req, res) => {
       }
     }
 
+    if (recurrence && recurrence.frequency) {
+      const { frequency, interval, specific_days } = recurrence;
+      const newRecurrence = await client.query(
+        'INSERT INTO recurrence_patterns (frequency, interval, specific_days) VALUES ($1, $2, $3) RETURNING id',
+        [frequency, interval, specific_days]
+      );
+      const recurrenceId = newRecurrence.rows[0].id;
+
+      await client.query(
+        'INSERT INTO habits (user_id, task_id, recurrence_id) VALUES ($1, $2, $3)',
+        [req.user.id, newTask.id, recurrenceId]
+      );
+    }
+
     await client.query('COMMIT');
     
     const result = await db.query(
-      `SELECT t.*, COALESCE(json_agg(ts.*) FILTER (WHERE ts.id IS NOT NULL), '[]') as time_slots
+      `SELECT t.*, 
+              COALESCE(json_agg(ts.*) FILTER (WHERE ts.id IS NOT NULL), '[]') as time_slots,
+              rp.frequency, rp.interval, rp.specific_days
        FROM tasks t
-       LEFT JOIN time_slots ts ON t.id = ts.task_id
+       LEFT JOIN task_time_slots ts ON t.id = ts.task_id
+       LEFT JOIN habits h ON t.id = h.task_id
+       LEFT JOIN recurrence_patterns rp ON h.recurrence_id = rp.id
        WHERE t.id = $1 AND t.user_id = $2
-       GROUP BY t.id`,
+       GROUP BY t.id, rp.frequency, rp.interval, rp.specific_days`,
       [newTask.id, req.user.id]
     );
 

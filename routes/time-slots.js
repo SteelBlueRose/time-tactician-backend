@@ -18,16 +18,35 @@ router.get('/', auth, async (req, res) => {
 // @route   POST /api/time-slots
 // @desc    Add a new time slot
 router.post('/', auth, async (req, res) => {
-  const { start_minutes, end_minutes, slot_type, recurrence_id } = req.body;
+  const { start_minutes, end_minutes, slot_type, recurrence } = req.body;
+  const client = await db.getClient();
+
   try {
-    const newTimeSlot = await db.query(
+    await client.query('BEGIN');
+
+    let recurrenceId = null;
+    if (recurrence && recurrence.frequency) {
+      const { frequency, interval, specific_days } = recurrence;
+      const newRecurrence = await client.query(
+        'INSERT INTO recurrence_patterns (frequency, interval, specific_days) VALUES ($1, $2, $3) RETURNING id',
+        [frequency, interval, specific_days]
+      );
+      recurrenceId = newRecurrence.rows[0].id;
+    }
+
+    const newTimeSlot = await client.query(
       'INSERT INTO time_slots (user_id, start_minutes, end_minutes, slot_type, recurrence_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [req.user.id, start_minutes, end_minutes, slot_type, recurrence_id]
+      [req.user.id, start_minutes, end_minutes, slot_type, recurrenceId]
     );
+
+    await client.query('COMMIT');
     res.json(newTimeSlot.rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error(err.message);
     res.status(500).send('Server Error');
+  } finally {
+    client.release();
   }
 });
 
