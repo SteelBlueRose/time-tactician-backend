@@ -83,6 +83,7 @@ router.put('/:id', auth, async (req, res) => {
     }
 
     let recurrenceId = existingTimeSlotResult.rows[0].recurrence_id;
+    const oldRecurrenceId = recurrenceId;
 
     if (recurrence && recurrence.frequency) {
       const { frequency, interval, specific_days } = recurrence;
@@ -106,6 +107,10 @@ router.put('/:id', auth, async (req, res) => {
       'UPDATE time_slots SET start_minutes = $1, end_minutes = $2, slot_type = $3, recurrence_id = $4 WHERE id = $5 AND user_id = $6 RETURNING *',
       [start_minutes, end_minutes, slot_type, recurrenceId, req.params.id, req.user.id]
     );
+
+    if (oldRecurrenceId && !recurrenceId) {
+      await client.query('DELETE FROM recurrence_patterns WHERE id = $1', [oldRecurrenceId]);
+    }
 
     await client.query('COMMIT');
     res.json(updatedTimeSlot.rows[0]);

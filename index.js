@@ -1,4 +1,3 @@
-console.log("--- SERVER STARTING WITH LATEST CHANGES ---");
 require('dotenv').config({ debug: true });
 const express = require('express');
 const app = express();
@@ -33,5 +32,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+  console.log(`--- SERVER STARTED SUCCESSFULLY ON PORT ${port} ---`);
 });

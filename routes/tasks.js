@@ -35,7 +35,8 @@ router.get('/', auth, async (req, res) => {
         ELSE NULL 
       END as recurrence
     FROM tasks t
-    LEFT JOIN time_slots ts ON t.id = ts.task_id
+    LEFT JOIN task_time_slots tts ON t.id = tts.task_id
+    LEFT JOIN time_slots ts ON tts.id = ts.id
     LEFT JOIN tasks sub ON t.id = sub.parent_task_id
     LEFT JOIN habits h ON t.id = h.task_id
     LEFT JOIN recurrence_patterns rp ON h.recurrence_id = rp.id
