@@ -1,6 +1,7 @@
+// db.js: Конфігурація пулу з'єднань
 const { Pool, types } = require('pg');
 
-// Parse TIMESTAMP and TIMESTAMPTZ as dates
+// Автоматичне перетворення TIMESTAMP у JavaScript Date об'єкти
 types.setTypeParser(1114, (stringValue) => {
   return new Date(stringValue + 'Z');
 });

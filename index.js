@@ -1,10 +1,11 @@
-console.log("--- SERVER STARTING WITH LATEST CHANGES ---");
+// Фрагмент index.js: Налаштування сервера та CORS
 require('dotenv').config({ debug: true });
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 3001;
 const cors = require('cors');
 
+// Дозвіл запитів лише з білого списку (локальний клієнт та продакшн Vercel)
 const whitelist = ['http://localhost:3000', process.env.FRONTEND_URL];
 const corsOptions = {
   origin: function (origin, callback) {
@@ -17,11 +18,9 @@ const corsOptions = {
   credentials: true
 };
 app.use(cors(corsOptions));
-
-// Init Middleware
 app.use(express.json({ extended: false }));
 
-// Define Routes
+// Реєстрація маршрутів бізнес-доменів
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/rewards', require('./routes/rewards'));
@@ -33,5 +32,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+  console.log(`--- SERVER STARTED SUCCESSFULLY ON PORT ${port} ---`);
 });

@@ -24,7 +24,7 @@ router.get('/', auth, async (req, res) => {
     SELECT 
       t.id, t.user_id, t.title, t.description, t.priority, t.deadline, 
       t.estimated_time, t.parent_task_id, t.created_at, t.updated_at, t.state, t.reward_points,
-      COALESCE(json_agg(DISTINCT ts.*) FILTER (WHERE ts.id IS NOT NULL), '[]') as time_slots,
+      COALESCE(json_agg(DISTINCT tts.*) FILTER (WHERE tts.id IS NOT NULL), '[]') as time_slots,
       COALESCE(json_agg(DISTINCT sub.id) FILTER (WHERE sub.id IS NOT NULL), '[]') as subtask_ids,
       CASE 
         WHEN rp.id IS NOT NULL THEN json_build_object(
@@ -35,7 +35,7 @@ router.get('/', auth, async (req, res) => {
         ELSE NULL 
       END as recurrence
     FROM tasks t
-    LEFT JOIN time_slots ts ON t.id = ts.task_id
+    LEFT JOIN task_time_slots tts ON t.id = tts.task_id
     LEFT JOIN tasks sub ON t.id = sub.parent_task_id
     LEFT JOIN habits h ON t.id = h.task_id
     LEFT JOIN recurrence_patterns rp ON h.recurrence_id = rp.id
